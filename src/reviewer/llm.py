@@ -14,7 +14,12 @@ from typing import Optional
 
 import requests
 
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+# `gemini-flash-latest` is a moving alias rather than a pinned version. For a
+# review bot that is the right trade: pinning a version means the bot silently
+# 404s the day that version is retired, and review quality does not need to be
+# reproducible across months. Anything needing reproducibility (see the eval
+# harness) should pin instead. Override with GEMINI_MODEL.
+MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "{model}:generateContent"
