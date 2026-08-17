@@ -39,10 +39,24 @@ def _extract_json(text: str) -> dict:
         raise LLMError(f"model did not return valid JSON: {text[:200]}") from e
 
 
-def review_hunk(system: str, user: str, retries: int = 3) -> dict:
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+def _read_api_key() -> str:
+    """Read and sanitise the key.
+
+    Secrets pasted into a web form or piped from a file routinely arrive with a
+    trailing newline or a leading UTF-8 BOM. Both are invisible, and both make
+    the request fail deep inside http.client with
+    `'latin-1' codec can't encode character '\\ufeff'` — an error that looks
+    like a library bug and is actually a whitespace bug. Strip them here, once.
+    """
+    raw = os.environ.get("GEMINI_API_KEY", "")
+    cleaned = raw.strip().lstrip("﻿").strip()
+    if not cleaned:
         raise LLMError("GEMINI_API_KEY is not set")
+    return cleaned
+
+
+def review_hunk(system: str, user: str, retries: int = 3) -> dict:
+    api_key = _read_api_key()
 
     payload = {
         "systemInstruction": {"parts": [{"text": system}]},
