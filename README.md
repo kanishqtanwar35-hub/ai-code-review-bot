@@ -51,7 +51,7 @@ integration, and CI configuration.
 | Env var | Default | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` | — | required |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | any Gemini model id |
+| `GEMINI_MODEL` | `gemini-flash-latest` | any Gemini model id |
 | `MAX_HUNKS` | `20` | caps calls per PR |
 | `MAX_ADDED_LINES` | `1500` | refuse-to-review threshold |
 

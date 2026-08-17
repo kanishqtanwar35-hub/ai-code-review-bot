@@ -14,7 +14,12 @@ from typing import Optional
 
 import requests
 
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+# `gemini-flash-latest` is a moving alias rather than a pinned version. For a
+# review bot that is the right trade: pinning a version means the bot silently
+# 404s the day that version is retired, and review quality does not need to be
+# reproducible across months. Anything needing reproducibility (see the eval
+# harness) should pin instead. Override with GEMINI_MODEL.
+MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "{model}:generateContent"
@@ -39,17 +44,39 @@ def _extract_json(text: str) -> dict:
         raise LLMError(f"model did not return valid JSON: {text[:200]}") from e
 
 
-def review_hunk(system: str, user: str, retries: int = 3) -> dict:
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+def _read_api_key() -> str:
+    """Read and sanitise the key.
+
+    Secrets pasted into a web form or piped from a file routinely arrive with a
+    trailing newline or a leading UTF-8 BOM. Both are invisible, and both make
+    the request fail deep inside http.client with
+    `'latin-1' codec can't encode character '\\ufeff'` — an error that looks
+    like a library bug and is actually a whitespace bug. Strip them here, once.
+    """
+    raw = os.environ.get("GEMINI_API_KEY", "")
+    # Escape sequence, not a literal BOM character. A raw U+FEFF in source is
+    # invisible in every editor, survives copy-paste, and makes the line
+    # impossible to review — the exact class of bug this function exists to fix.
+    cleaned = raw.strip().lstrip("\ufeff").strip()
+    if not cleaned:
         raise LLMError("GEMINI_API_KEY is not set")
+    return cleaned
+
+
+def review_hunk(system: str, user: str, retries: int = 3) -> dict:
+    api_key = _read_api_key()
 
     payload = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user}]}],
         "generationConfig": {
             "temperature": 0.1,          # review is not a creative task
-            "maxOutputTokens": 400,
+            # Generous, despite the response being a few dozen tokens. Current
+            # flash models spend budget on internal reasoning before emitting
+            # anything, so a tight cap truncates the JSON mid-object and the
+            # parse fails with a confusing `{"findings":` fragment. Cheap
+            # insurance: unused budget costs nothing.
+            "maxOutputTokens": 2048,
             "responseMimeType": "application/json",
         },
     }
@@ -72,10 +99,18 @@ def review_hunk(system: str, user: str, retries: int = 3) -> dict:
                 json=payload,
                 timeout=45,
             )
-            # 429 = free-tier rate limit. Back off rather than giving up.
-            if r.status_code == 429:
-                wait = 2 ** (attempt + 2)
-                time.sleep(wait)
+            # Retry the whole class of "not your fault, try again" responses:
+            # 429 is the free-tier rate limit, 500/502/503 are provider-side
+            # capacity. Retrying only 429 means a routine 503 burns the attempt
+            # budget on immediate re-requests and the review silently produces
+            # nothing. Note last_error is set here too — otherwise a run that
+            # exhausts its retries on status codes alone reports "failed after
+            # 3 attempts: None", which tells you nothing.
+            if r.status_code in (429, 500, 502, 503):
+                last_error = RuntimeError(
+                    f"{r.status_code} from the API (attempt {attempt + 1}/{retries})"
+                )
+                time.sleep(2 ** (attempt + 2))
                 continue
             r.raise_for_status()
             text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
