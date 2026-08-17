@@ -1,0 +1,80 @@
+"""Gemini client over plain HTTP.
+
+No SDK on purpose: the REST call is ten lines, it never breaks on a package
+upgrade, and you learn what the API actually looks like. Gemini's free tier
+makes this project cost nothing.
+
+Get a key at https://aistudio.google.com/apikey
+"""
+
+import json
+import os
+import time
+from typing import Optional
+
+import requests
+
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+ENDPOINT = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "{model}:generateContent"
+)
+
+
+class LLMError(RuntimeError):
+    pass
+
+
+def _extract_json(text: str) -> dict:
+    """Models sometimes wrap JSON in markdown fences despite instructions."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text
+        text = text.rsplit("```", 1)[0]
+        if text.startswith("json"):
+            text = text[4:]
+    try:
+        return json.loads(text.strip())
+    except json.JSONDecodeError as e:
+        raise LLMError(f"model did not return valid JSON: {text[:200]}") from e
+
+
+def review_hunk(system: str, user: str, retries: int = 3) -> dict:
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise LLMError("GEMINI_API_KEY is not set")
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
+        "generationConfig": {
+            "temperature": 0.1,          # review is not a creative task
+            "maxOutputTokens": 400,
+            "responseMimeType": "application/json",
+        },
+    }
+
+    url = ENDPOINT.format(model=MODEL)
+    last_error: Optional[Exception] = None
+
+    for attempt in range(retries):
+        try:
+            r = requests.post(
+                url,
+                params={"key": api_key},
+                json=payload,
+                timeout=45,
+            )
+            # 429 = free-tier rate limit. Back off rather than giving up.
+            if r.status_code == 429:
+                wait = 2 ** (attempt + 2)
+                time.sleep(wait)
+                continue
+            r.raise_for_status()
+            text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            return _extract_json(text)
+        except Exception as e:
+            last_error = e
+            time.sleep(2 ** attempt)
+
+    raise LLMError(f"review failed after {retries} attempts: {last_error}")
