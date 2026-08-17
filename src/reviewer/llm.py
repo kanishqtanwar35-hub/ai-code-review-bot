@@ -71,7 +71,12 @@ def review_hunk(system: str, user: str, retries: int = 3) -> dict:
         "contents": [{"role": "user", "parts": [{"text": user}]}],
         "generationConfig": {
             "temperature": 0.1,          # review is not a creative task
-            "maxOutputTokens": 400,
+            # Generous, despite the response being a few dozen tokens. Current
+            # flash models spend budget on internal reasoning before emitting
+            # anything, so a tight cap truncates the JSON mid-object and the
+            # parse fails with a confusing `{"findings":` fragment. Cheap
+            # insurance: unused budget costs nothing.
+            "maxOutputTokens": 2048,
             "responseMimeType": "application/json",
         },
     }
