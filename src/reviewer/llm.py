@@ -57,11 +57,18 @@ def review_hunk(system: str, user: str, retries: int = 3) -> dict:
     url = ENDPOINT.format(model=MODEL)
     last_error: Optional[Exception] = None
 
+    # The key goes in a HEADER, never in the query string. A `?key=...` URL
+    # ends up inside requests' exception messages, which get printed straight
+    # into CI logs — and Actions only redacts values registered as secrets in
+    # the exact form it knows. A key embedded in a URL fragment can slip
+    # through. Headers are never echoed back in exception text.
+    headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
+
     for attempt in range(retries):
         try:
             r = requests.post(
                 url,
-                params={"key": api_key},
+                headers=headers,
                 json=payload,
                 timeout=45,
             )
