@@ -99,10 +99,18 @@ def review_hunk(system: str, user: str, retries: int = 3) -> dict:
                 json=payload,
                 timeout=45,
             )
-            # 429 = free-tier rate limit. Back off rather than giving up.
-            if r.status_code == 429:
-                wait = 2 ** (attempt + 2)
-                time.sleep(wait)
+            # Retry the whole class of "not your fault, try again" responses:
+            # 429 is the free-tier rate limit, 500/502/503 are provider-side
+            # capacity. Retrying only 429 means a routine 503 burns the attempt
+            # budget on immediate re-requests and the review silently produces
+            # nothing. Note last_error is set here too — otherwise a run that
+            # exhausts its retries on status codes alone reports "failed after
+            # 3 attempts: None", which tells you nothing.
+            if r.status_code in (429, 500, 502, 503):
+                last_error = RuntimeError(
+                    f"{r.status_code} from the API (attempt {attempt + 1}/{retries})"
+                )
+                time.sleep(2 ** (attempt + 2))
                 continue
             r.raise_for_status()
             text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
