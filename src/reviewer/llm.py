@@ -54,7 +54,10 @@ def _read_api_key() -> str:
     like a library bug and is actually a whitespace bug. Strip them here, once.
     """
     raw = os.environ.get("GEMINI_API_KEY", "")
-    cleaned = raw.strip().lstrip("﻿").strip()
+    # Escape sequence, not a literal BOM character. A raw U+FEFF in source is
+    # invisible in every editor, survives copy-paste, and makes the line
+    # impossible to review — the exact class of bug this function exists to fix.
+    cleaned = raw.strip().lstrip("\ufeff").strip()
     if not cleaned:
         raise LLMError("GEMINI_API_KEY is not set")
     return cleaned
